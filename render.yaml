@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: vault-games
+    runtime: node
+    rootDir: artifacts/sigma-games
+    buildCommand: npm install -g pnpm && pnpm install && pnpm run build
+    startCommand: pnpm run serve
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 5000
+      - key: DATABASE_URL
+        fromDatabase:
+          name: vault-games-db
+          property: connectionString
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: AI_INTEGRATIONS_GEMINI_API_KEY
+        sync: false
+
+databases:
+  - name: vault-games-db
+    databaseName: vaultgames
+    plan: free
