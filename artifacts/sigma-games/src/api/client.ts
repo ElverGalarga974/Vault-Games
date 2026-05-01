@@ -93,8 +93,10 @@ export const authApi = {
 
   me: () => api.get<{ user: UserProfile }>('/auth/me'),
 
-  resetPassword: (email: string, username: string, newPassword: string) =>
-    api.post<{ success: boolean }>('/auth/reset-password', { email, username, newPassword }),
+  forgotPassword: (email: string) =>
+    api.post<{ success: boolean }>('/auth/forgot-password', { email }),
+  resetPassword: (token: string, newPassword: string) =>
+    api.post<{ success: boolean }>('/auth/reset-password', { token, newPassword }),
 };
 
 export const profileApi = {

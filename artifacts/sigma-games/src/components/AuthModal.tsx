@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { User, X, LogIn, UserPlus, Eye, EyeOff, Loader, ArrowLeft, KeyRound, CheckCircle2 } from 'lucide-react';
 import { useGameContext } from '../context/GameContext';
@@ -21,13 +21,29 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
   const [showPassword, setShowPassword] = useState(false);
   const [showForgot, setShowForgot] = useState(false);
   const [resetDone, setResetDone] = useState(false);
-  const [resetForm, setResetForm] = useState({ email: '', username: '', newPassword: '' });
+  const [forgotEmail, setForgotEmail] = useState('');
   const [emailError, setEmailError] = useState('');
+
+  // Token-based reset (from email link)
+  const [resetToken, setResetToken] = useState<string | null>(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [tokenResetDone, setTokenResetDone] = useState(false);
 
   const [loginForm, setLoginForm] = useState({ emailOrUsername: '', password: '' });
   const [registerForm, setRegisterForm] = useState({ username: '', email: '', password: '' });
 
-  if (!isOpen) return null;
+  // Check for reset token in URL
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('reset');
+    if (token) {
+      setResetToken(token);
+      // Clean URL
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, []);
+
+  if (!isOpen && !resetToken) return null;
 
   const validateEmail = (email: string): boolean => {
     if (!EMAIL_REGEX.test(email)) {
@@ -67,18 +83,30 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
     }
   };
 
-  const handleResetSubmit = async (e: React.FormEvent) => {
+  const handleForgotSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    if (!validateEmail(resetForm.email)) return;
-    if (resetForm.newPassword.length < 6) {
-      setError('Password must be at least 6 characters');
-      return;
-    }
+    if (!validateEmail(forgotEmail)) return;
     setLoading(true);
     try {
-      await authApi.resetPassword(resetForm.email, resetForm.username, resetForm.newPassword);
+      await authApi.forgotPassword(forgotEmail);
       setResetDone(true);
+    } catch (err: any) {
+      setError(err.message || 'Failed to send reset email');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleTokenReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    if (newPassword.length < 6) { setError('Password must be at least 6 characters'); return; }
+    setLoading(true);
+    try {
+      await authApi.resetPassword(resetToken!, newPassword);
+      setTokenResetDone(true);
+      setResetToken(null);
     } catch (err: any) {
       setError(err.message || 'Failed to reset password');
     } finally {
@@ -89,7 +117,7 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
   const exitForgot = () => {
     setShowForgot(false);
     setResetDone(false);
-    setResetForm({ email: '', username: '', newPassword: '' });
+    setForgotEmail('');
     setError('');
     setEmailError('');
   };
@@ -112,12 +140,50 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
             <X className="w-5 h-5" />
           </button>
 
-          {showForgot ? (
+          {/* Token reset dialog — shown when user arrives from email link */}
+          {resetToken && (
+            <div>
+              <div className="text-center mb-6">
+                <div className="relative w-16 h-16 mx-auto mb-3">
+                  <div className="absolute inset-0 bg-violet-500/20 rounded-full animate-pulse" />
+                  <div className="relative bg-gradient-to-br from-violet-400 to-fuchsia-500 rounded-full w-full h-full flex items-center justify-center shadow-lg shadow-violet-500/50">
+                    <KeyRound className="w-8 h-8 text-white" />
+                  </div>
+                </div>
+                <h2 className="text-2xl font-black text-white mb-1">Set New Password</h2>
+                <p className="text-gray-400 text-xs">Enter your new password below</p>
+              </div>
+              {error && <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-sm text-center">{error}</div>}
+              {tokenResetDone ? (
+                <div className="text-center space-y-4">
+                  <CheckCircle2 className="w-16 h-16 text-green-400 mx-auto" />
+                  <p className="text-gray-300 text-sm">Password updated! You can now log in.</p>
+                  <button onClick={() => { setTokenResetDone(false); onClose(); }} className="w-full py-3 bg-green-600 hover:bg-green-500 text-white rounded-xl font-bold transition-all flex items-center justify-center gap-2">
+                    <LogIn className="w-5 h-5" /> Log In
+                  </button>
+                </div>
+              ) : (
+                <form onSubmit={handleTokenReset} className="space-y-3">
+                  <div className="relative">
+                    <input type={showPassword ? 'text' : 'password'} placeholder="New password (min 6 characters)" value={newPassword} onChange={e => setNewPassword(e.target.value)} className={inputClass + ' pr-10'} required minLength={6} />
+                    <button type="button" onClick={() => setShowPassword(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white">
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                  <button type="submit" disabled={loading} className="w-full py-3 bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white rounded-xl font-bold transition-all flex items-center justify-center gap-2">
+                    {loading ? <Loader className="w-5 h-5 animate-spin" /> : <KeyRound className="w-5 h-5" />}
+                    {loading ? 'Saving...' : 'Set New Password'}
+                  </button>
+                </form>
+              )}
+            </div>
+          )}
+
+          {!resetToken && showForgot ? (
             <div>
               <button onClick={exitForgot} className="flex items-center gap-1 text-gray-400 hover:text-white text-sm mb-4 transition-colors">
                 <ArrowLeft className="w-4 h-4" /> Back to Login
               </button>
-
               <div className="text-center mb-6">
                 <div className="relative w-16 h-16 mx-auto mb-3">
                   <div className="absolute inset-0 bg-orange-500/20 rounded-full animate-pulse" />
@@ -125,80 +191,32 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
                     <KeyRound className="w-8 h-8 text-white" />
                   </div>
                 </div>
-                <h2 className="text-2xl font-black text-white mb-1">
-                  {resetDone ? 'Password Reset!' : 'Reset Password'}
-                </h2>
-                <p className="text-gray-400 text-xs">
-                  {resetDone ? 'You can now log in with your new password' : 'Enter your email and username to verify your identity'}
-                </p>
+                <h2 className="text-2xl font-black text-white mb-1">{resetDone ? 'Check your email!' : 'Forgot Password?'}</h2>
+                <p className="text-gray-400 text-xs">{resetDone ? `We sent a reset link to ${forgotEmail}` : "Enter your email and we'll send you a reset link"}</p>
               </div>
-
-              {error && (
-                <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-sm text-center">
-                  {error}
-                </div>
-              )}
-
+              {error && <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 text-sm text-center">{error}</div>}
               {resetDone ? (
                 <div className="text-center space-y-4">
-                  <div className="flex justify-center">
-                    <CheckCircle2 className="w-16 h-16 text-green-400 drop-shadow-[0_0_15px_rgba(74,222,128,0.5)]" />
-                  </div>
-                  <button
-                    onClick={exitForgot}
-                    className="w-full py-3 bg-green-600 hover:bg-green-500 text-white rounded-xl font-bold transition-all flex items-center justify-center gap-2 shadow-lg shadow-green-600/20"
-                  >
+                  <CheckCircle2 className="w-16 h-16 text-green-400 mx-auto drop-shadow-[0_0_15px_rgba(74,222,128,0.5)]" />
+                  <p className="text-gray-400 text-sm">Click the link in your email to set a new password. Check your spam folder if you don't see it.</p>
+                  <button onClick={exitForgot} className="w-full py-3 bg-green-600 hover:bg-green-500 text-white rounded-xl font-bold transition-all flex items-center justify-center gap-2">
                     <LogIn className="w-5 h-5" /> Back to Login
                   </button>
                 </div>
               ) : (
-                <form onSubmit={handleResetSubmit} className="space-y-3">
+                <form onSubmit={handleForgotSubmit} className="space-y-3">
                   <div>
-                    <input
-                      type="email"
-                      placeholder="Your email address"
-                      value={resetForm.email}
-                      onChange={e => { setResetForm(f => ({ ...f, email: e.target.value })); setEmailError(''); }}
-                      className={inputClass + (emailError ? ' border-red-500/50' : '')}
-                      required
-                    />
+                    <input type="email" placeholder="Your email address" value={forgotEmail} onChange={e => { setForgotEmail(e.target.value); setEmailError(''); }} className={inputClass + (emailError ? ' border-red-500/50' : '')} required />
                     {emailError && <p className="text-red-400 text-xs mt-1 ml-1">{emailError}</p>}
                   </div>
-                  <input
-                    type="text"
-                    placeholder="Your username"
-                    value={resetForm.username}
-                    onChange={e => setResetForm(f => ({ ...f, username: e.target.value }))}
-                    className={inputClass}
-                    required
-                  />
-                  <div className="relative">
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      placeholder="New password (min 6 characters)"
-                      value={resetForm.newPassword}
-                      onChange={e => setResetForm(f => ({ ...f, newPassword: e.target.value }))}
-                      className={inputClass + ' pr-10'}
-                      required
-                      minLength={6}
-                    />
-                    <button type="button" onClick={() => setShowPassword(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white">
-                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="w-full py-3 bg-orange-600 hover:bg-orange-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-xl font-bold transition-all flex items-center justify-center gap-2 shadow-lg shadow-orange-600/20 mt-1"
-                  >
+                  <button type="submit" disabled={loading} className="w-full py-3 bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white rounded-xl font-bold transition-all flex items-center justify-center gap-2 shadow-lg shadow-orange-600/20 mt-1">
                     {loading ? <Loader className="w-5 h-5 animate-spin" /> : <KeyRound className="w-5 h-5" />}
-                    {loading ? 'Resetting...' : 'Reset Password'}
+                    {loading ? 'Sending...' : 'Send Reset Link'}
                   </button>
                 </form>
               )}
             </div>
-          ) : (
-            <>
+          ) : !resetToken && (
               <div className="text-center mb-6">
                 <div className="relative w-16 h-16 mx-auto mb-3">
                   <div className="absolute inset-0 bg-blue-500/20 rounded-full animate-pulse" />

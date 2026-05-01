@@ -169,34 +169,78 @@ router.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
   }
 });
 
-router.post('/reset-password', async (req: Request, res: Response) => {
-  const { email, username, newPassword } = req.body;
-  if (!email || !username || !newPassword) {
-    return res.status(400).json({ error: 'Email, username and new password are required' });
-  }
-  if (!EMAIL_REGEX.test(email)) {
+import { Resend } from 'resend';
+
+const resend = new Resend(process.env.RESEND_API_KEY);
+const FROM_EMAIL = 'Vault Games <noreply@vaultgames.site>';
+
+// ── Forgot password — send reset email ──────────────────────────────────────
+router.post('/forgot-password', async (req: Request, res: Response) => {
+  const { email } = req.body;
+  if (!email || !EMAIL_REGEX.test(email)) {
     return res.status(400).json({ error: 'Please enter a valid email address' });
+  }
+  try {
+    const result = await pool.query('SELECT id, username FROM users WHERE email = $1', [email.toLowerCase()]);
+    // Always return success to prevent email enumeration
+    if (result.rowCount === 0) return res.json({ success: true });
+
+    const user = result.rows[0];
+    const token = require('crypto').randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 1000 * 60 * 60); // 1 hour
+
+    await pool.query(
+      'INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES ($1, $2, $3)',
+      [user.id, token, expiresAt]
+    );
+
+    const resetUrl = `https://vaultgames.site/?reset=${token}`;
+
+    await resend.emails.send({
+      from: FROM_EMAIL,
+      to: email.toLowerCase(),
+      subject: 'Reset your Vault Games password',
+      html: `
+        <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px;background:#0f0f0f;color:#fff;border-radius:12px;">
+          <h1 style="font-size:24px;margin-bottom:8px;">🔐 Reset your password</h1>
+          <p style="color:#aaa;margin-bottom:24px;">Hey ${user.username}, click the button below to reset your Vault Games password. This link expires in 1 hour.</p>
+          <a href="${resetUrl}" style="display:inline-block;background:#7c3aed;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;font-size:15px;">Reset Password</a>
+          <p style="color:#555;font-size:12px;margin-top:24px;">If you didn't request this, ignore this email. Your password won't change.</p>
+          <p style="color:#555;font-size:12px;">Or copy this link: ${resetUrl}</p>
+        </div>
+      `,
+    });
+
+    return res.json({ success: true });
+  } catch (err: any) {
+    console.error('Forgot password error:', err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ── Reset password with token ────────────────────────────────────────────────
+router.post('/reset-password', async (req: Request, res: Response) => {
+  const { token, newPassword } = req.body;
+  if (!token || !newPassword) {
+    return res.status(400).json({ error: 'Token and new password are required' });
   }
   if (newPassword.length < 6) {
     return res.status(400).json({ error: 'Password must be at least 6 characters' });
   }
   try {
     const result = await pool.query(
-      'SELECT id FROM users WHERE email = $1 AND LOWER(username) = $2',
-      [email.toLowerCase(), username.toLowerCase()]
+      `SELECT prt.id, prt.user_id FROM password_reset_tokens prt
+       WHERE prt.token = $1 AND prt.used = FALSE AND prt.expires_at > NOW()`,
+      [token]
     );
     if (result.rowCount === 0) {
-      return res.status(400).json({ error: 'No account matches that email and username combination' });
+      return res.status(400).json({ error: 'Reset link is invalid or has expired' });
     }
+    const { id: tokenId, user_id } = result.rows[0];
     const passwordHash = await bcrypt.hash(newPassword, 12);
-    await pool.query(
-      'UPDATE users SET password_hash = $1 WHERE id = $2',
-      [passwordHash, result.rows[0].id]
-    );
-    await pool.query(
-      'DELETE FROM sessions WHERE user_id = $1',
-      [result.rows[0].id]
-    );
+    await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [passwordHash, user_id]);
+    await pool.query('UPDATE password_reset_tokens SET used = TRUE WHERE id = $1', [tokenId]);
+    await pool.query('DELETE FROM sessions WHERE user_id = $1', [user_id]);
     return res.json({ success: true });
   } catch (err: any) {
     console.error('Reset password error:', err);
