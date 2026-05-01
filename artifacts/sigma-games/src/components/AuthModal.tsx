@@ -217,6 +217,7 @@ export function AuthModal({ isOpen, onClose }: AuthModalProps) {
               )}
             </div>
           ) : !resetToken && (
+            <>
               <div className="text-center mb-6">
                 <div className="relative w-16 h-16 mx-auto mb-3">
                   <div className="absolute inset-0 bg-blue-500/20 rounded-full animate-pulse" />
